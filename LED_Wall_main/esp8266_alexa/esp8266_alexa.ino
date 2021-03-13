@@ -9,13 +9,13 @@
 #include <Arduino.h>
 #include <ESP8266WiFi.h>    //if you get an error here you need to install the ESP8266 board manager 
 #include <ESP8266mDNS.h>    //if you get an error here you need to install the ESP8266 board manager 
+#include <WiFiUdp.h>
+#include <ArduinoOTA.h>
 #include <Espalexa.h>       //https://github.com/Aircoookie/Espalexa
 #include <arduino-timer.h>  //https://github.com/contrem/arduino-timer
 
-#define SERIAL_BAUDRATE 115200
-
-#define WIFI_SSID "TODO"
-#define WIFI_PASS "TODO"
+#define WIFI_SSID "tjhome"
+#define WIFI_PASS "deadface07"
 #define ALEXA_DEVICE_NAME "Cool Project"
 
 #define USER_MQTT_SERVER          "UNUSED"
@@ -31,6 +31,9 @@ const int mqtt_port = USER_MQTT_PORT ;
 const char *mqtt_user = USER_MQTT_USERNAME ;
 const char *mqtt_pass = USER_MQTT_PASSWORD ;
 const char *mqtt_client_name = USER_MQTT_CLIENT_NAME ;
+const char *alexa_device_name = ALEXA_DEVICE_NAME;
+char start_msg = '<';
+char end_msg = '>';
 
 //WiFiClient espClient;
 //PubSubClient client(espClient);
@@ -39,59 +42,110 @@ Espalexa espalexa;
 boolean connectWifi();
 boolean wifiConnected = false;
 
+
+template <typename... T>
+void logToSerial(const char *str, T... args) {
+  int i;
+  int len = snprintf(NULL, 0, str, args...);
+  if (len) {
+      char buf[len];
+      bzero(buf, len);
+      sprintf(buf, str, args...);
+      Serial.print('<');
+      Serial.print(buf);
+      Serial.print('>');
+  }
+}
+
+void setupOTA() {
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+      logToSerial("Start updating sketch");
+    } else { // U_FS
+      type = "filesystem";
+      logToSerial("Start updating filesystem");
+    }
+  });
+  ArduinoOTA.onEnd([]() {
+    logToSerial("\nEnd");
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    logToSerial("Progress: %u", total);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    logToSerial("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      logToSerial("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      logToSerial("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      logToSerial("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      logToSerial("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      logToSerial("End Failed");
+    }
+  });
+  ArduinoOTA.begin();
+  logToSerial("OTA Ready");
+}
+
 boolean connectWifi() {
   boolean state = true;
   int i = 0;
 
   WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.begin(ssid, password);
-  Serial.println("");
-  Serial.println("Connecting to WiFi");
+  logToSerial("Connecting to WiFi");
 
   // Wait for connection
-  Serial.print("Connecting...");
+  logToSerial("Connecting...");
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+    delay(1000);
+    logToSerial(".");
     if (i > 40) {
-      state = false; break;
+      state = false; 
+      break;
     }
     i++;
   }
-  Serial.println("");
   if (state) {
-    Serial.print("Connected to ");
-    Serial.println(ssid);
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+    logToSerial("Connected to ");
+    logToSerial(ssid);
+    //logToSerial("IP address: ");
+    //char ipaddr[16];
+    //WiFi.localIP().toString().toCharArray(ipaddr, sizeof(ipaddr));
+    //logToSerial(ipaddr);
+    setupOTA();
   }
   else {
-    Serial.println("Connection failed.");
+    logToSerial("Connection failed.");
   }
   return state;
 }
 
 bool helloworld(void *)
 {
-  Serial.println("'ello world.");
+  logToSerial("Hello from ESP world.");
   return true; // keep timer active
 }
 
 void colorLightChanged1(uint8_t brightnessCommand, uint32_t rgb)
 {
-  Serial.println("OMG...its working!?");
-  Serial.println(brightnessCommand);
-  Serial.println(rgb);
+  logToSerial("OMG...its working!?. brightness - 0x%x rbd - 0x%x", brightnessCommand, rgb);
 }
 
 void setup() {
-  Serial.begin(SERIAL_BAUDRATE);
-  WiFi.setSleepMode(WIFI_NONE_SLEEP);
-  WiFi.mode(WIFI_STA);
+  Serial.begin(9600);
+  logToSerial("Booting");
+
   wifiConnected = connectWifi();
   if (wifiConnected)
   {
-    espalexa.addDevice("LED Grid", colorLightChanged1);
+    espalexa.addDevice(alexa_device_name, colorLightChanged1);
     espalexa.begin();
   }
   else
@@ -99,15 +153,11 @@ void setup() {
     delay(5000);
     ESP.restart();
   }
-  //ArduinoOTA.setHostname(USER_MQTT_CLIENT_NAME);
-  //ArduinoOTA.begin();
-  timer.every(10000, helloworld);
+  timer.every(5000, helloworld);
 }
-
 
 void loop() {
   espalexa.loop();
-  //ArduinoOTA.handle();
-
+  ArduinoOTA.handle();
   timer.tick();
 }

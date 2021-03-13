@@ -22,6 +22,8 @@
  * 2560+ESP           | 1 | 1 | 0 | 0 | 0 | 0 | 0 |   |
  * independent        | 0 | 0 | 0 | 0 | 0 | 0 | 0 |   |
  * 
+ * The two module communicate thru com3/Serial3.
+ * Serial Basics - https://forum.arduino.cc/index.php?topic=396450.0
  */
 
 
@@ -30,21 +32,32 @@
 #include <arduinoFFT.h>
 #include <LCDWIKI_GUI.h> //Core graphics library
 #include <LCDWIKI_KBV.h> //Hardware-specific library
+#include <arduino-timer.h>  //https://github.com/contrem/arduino-timer
 
+// LED stuff
 #define SAMPLES 8        // Must be a power of 2
 #define LED_PIN     8     // Data pin to LEDS
 #define NUM_LEDS    384  
 #define BRIGHTNESS  255    // from 0 to 255
 #define LED_TYPE    WS2811
-#define COLOR_ORDER GRB 
-int MIC_IN = 0;         // Use A0 for mic input
-
-//if the IC model is known or the modules is unreadable,you can use this constructed function
-LCDWIKI_KBV my_lcd(ILI9486,A3,A2,A1,A0,A4); //model,cs,cd,wr,rd,reset
-
+#define COLOR_ORDER GRB
+#define NUM_MODES 4
+ 
 #define ROWS 8
 #define COLS 8
-//define some colour values
+
+double vReal[SAMPLES];
+double vImag[SAMPLES] = { };
+int Intensity[COLS] = { }; // initialize Frequency Intensity to zero
+arduinoFFT FFT = arduinoFFT();  // Create FFT object
+
+int values[ROWS][COLS]; // 2D array to keep track of the current color of each tile
+int mem_values[ROWS][COLS]; // 2D array to keep track Memory Colors
+int brightness[ROWS][COLS]; // 2D array to keep track of the current brightness of each tile
+int MIC_IN = 0;         // Use A0 for mic input
+
+// LCD stuff
+LCDWIKI_KBV my_lcd(ILI9486,A3,A2,A1,A0,A4); //model,cs,cd,wr,rd,reset
 #define BLACK   0x0000
 #define BLUE    0x001F
 #define RED     0xF800
@@ -54,18 +67,8 @@ LCDWIKI_KBV my_lcd(ILI9486,A3,A2,A1,A0,A4); //model,cs,cd,wr,rd,reset
 #define YELLOW  0xFFE0
 #define WHITE   0xFFFF
 
+auto timer = timer_create_default();
 
-
-double vReal[SAMPLES];
-double vImag[SAMPLES] = { };
-int Intensity[COLS] = { }; // initialize Frequency Intensity to zero
-arduinoFFT FFT = arduinoFFT();  // Create FFT object
-
-#define NUM_MODES 4
-
-int values[ROWS][COLS]; // 2D array to keep track of the current color of each tile
-int mem_values[ROWS][COLS]; // 2D array to keep track Memory Colors
-int brightness[ROWS][COLS]; // 2D array to keep track of the current brightness of each tile
 
 //-----------------------------Button Set Up-----------------------------------------
 const byte rows = 8;
@@ -83,7 +86,7 @@ char keys[rows][cols] = {
 byte rowPins[rows] = {10,9,2,3,4,5,6,7}; //connect to the row pinouts of the keypad
 byte colPins[cols] = {38,40,42,44,46,48,50,52}; //connect to the column pinouts of the keypad
 Keypad buttons = Keypad( makeKeymap(keys), rowPins, colPins, rows, cols );
-//--------------------------=--------------------------------------------------------
+//-----------------------------------------------------------------------------------
 
 CRGB leds[NUM_LEDS];            // Create LED Object
 
@@ -91,8 +94,82 @@ int mode = 1;                   // Start on the first mode
 
 CRGBPalette16 currentPalette;   // Used for christmas mode
 
-void setup(){
-  Serial.begin(9600);
+//-----------------------------------------------------------------------------------
+#define SERIAL_MAX_LEN 128
+#define SERIAL_START '<'
+#define SERIAL_END '>'
+typedef struct SerialXfer {
+  boolean recvInProgress;
+  boolean completeData;
+  byte index;
+  char chars[SERIAL_MAX_LEN];
+  //char tempChars[SERIAL_MAX_LEN];
+} SerialXfer;
+SerialXfer serialXfer = {0};
+
+
+//-----------------------------------------------------------------------------------
+
+
+bool helloworld(void *)
+{
+  Serial.println("Hello world from 2560.");
+  return true; // keep timer active
+}
+
+/*
+void parseData() {      // split the data into its parts
+    char * strtokIndx; // this is used by strtok() as an index
+
+    strtokIndx = strtok(tempChars,",");      // get the first part - the string
+    strcpy(messageFromPC, strtokIndx); // copy it to messageFromPC
+ 
+    strtokIndx = strtok(NULL, ","); // this continues where the previous call left off
+    integerFromPC = atoi(strtokIndx);     // convert this part to an integer
+
+    strtokIndx = strtok(NULL, ",");
+    floatFromPC = atof(strtokIndx);     // convert this part to a float
+}
+*/
+
+void showParsedData() {
+    Serial.print("EspMessage: ");
+    Serial.println(serialXfer.chars);   
+}
+
+void readEspMessages() {
+  char serChar;
+
+  while ( (Serial3.available() > 0) && 
+          (serialXfer.completeData == false) ) {
+      serChar = Serial3.read();
+      //Serial.println(serChar);   
+      if (serialXfer.recvInProgress == true) {
+          if (serChar != SERIAL_END) {
+              serialXfer.chars[serialXfer.index] = serChar;
+              serialXfer.index++;
+              if (serialXfer.index >= SERIAL_MAX_LEN) {
+                  serialXfer.index = SERIAL_MAX_LEN - 1;
+              }
+          }
+          else {
+              serialXfer.chars[serialXfer.index] = '\0'; // terminate the string
+              serialXfer.recvInProgress = false;
+              serialXfer.index = 0;
+              serialXfer.completeData = true;
+              showParsedData();
+          }
+      } else if (serChar == SERIAL_START) {
+          serialXfer.recvInProgress = true;
+      }
+  }
+  if (serialXfer.completeData == true) {
+    serialXfer.completeData = false;
+  }
+}
+ 
+
+void lcd_setup() {
   my_lcd.Init_LCD();
   my_lcd.Fill_Screen(0x0);  
   my_lcd.Set_Rotation(1);
@@ -105,18 +182,26 @@ void setup(){
   show_string("* OMG iz it working!? *",CENTER,3,1,0x07E0, 0,1);
   show_string(str,CENTER,my_lcd.Get_Display_Height()-11,1,0xFFFF, 0,1);
   show_string("---> T+L 4eva <---",CENTER,my_lcd.Get_Display_Height()/2 - 11,8,RED, 0,1);
+}
 
-
+void setup(){
+  Serial.begin(115200);  // usb
+  Serial3.begin(9600);   // internal to esp
 
   delay(1000); // power-up safety delay
-  pinMode(MIC_IN, INPUT);
-  FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
-  FastLED.setBrightness(  BRIGHTNESS );
-  
-  buttons.setHoldTime(1000); // require a 1 second hold to change modes
-  randomSeed(analogRead(1)); //Seed Random
-  clear_display(); //Make sure the display is blank
 
+  Serial.println("Starting setup...");
+
+  //pinMode(MIC_IN, INPUT);
+  //FastLED.addLeds<LED_TYPE, LED_PIN, COLOR_ORDER>(leds, NUM_LEDS).setCorrection( TypicalLEDStrip );
+  //FastLED.setBrightness(  BRIGHTNESS );
+  
+  //buttons.setHoldTime(1000); // require a 1 second hold to change modes
+  //randomSeed(analogRead(1)); //Seed Random
+  //clear_display(); //Make sure the display is blank
+  timer.every(5000, helloworld);
+
+  Serial.println("Finished setup.");
 }
 
 void loop(){
@@ -143,14 +228,18 @@ void loop(){
  // -------------------------------------------------------*/
 
  //--------------- Actual Code ---------------------------
-
-  print_menu();
+  readEspMessages();
+  //print_menu();
+  /*
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
   delay(5000);                       // wait for a second
   digitalWrite(LED_BUILTIN, LOW);    // turn the LED off by making the voltage LOW
   delay(1000);       
   digitalWrite(LED_BUILTIN, HIGH);   // turn the LED on (HIGH is the voltage level)
   delay(5000);                       // wait for a second
+  */
+  
+  /* 
   int location = buttons.getKey();
   mode = buttons.waitForKey();
   switch(mode){
@@ -171,7 +260,8 @@ void loop(){
       Visualizer();
       break;
   }
-//-------------------------------------------------------*/
+  */
+  timer.tick();
 }
 
 void light_tile(int row, int col, int color, int bright){
