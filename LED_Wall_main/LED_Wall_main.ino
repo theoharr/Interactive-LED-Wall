@@ -35,14 +35,13 @@
 #include <arduino-timer.h>  //https://github.com/contrem/arduino-timer
 
 // LED stuff
-#define SAMPLES 8        // Must be a power of 2
-#define LED_PIN     8     // Data pin to LEDS
-#define NUM_LEDS    384  
-#define BRIGHTNESS  255    // from 0 to 255
-#define LED_TYPE    WS2811
+#define SAMPLES 8            // Must be a power of 2
+#define LED_PIN     8        // Data pin to LEDS
+#define NUM_LEDS    384      // 8 rows x 2 strips x 24 leds per strip or 6 LEDs x 64 panels
+#define BRIGHTNESS  255      // from 0 to 255
+#define LED_TYPE    NEOPIXEL //aka 2812b 
 #define COLOR_ORDER GRB
 #define NUM_MODES 4
- 
 #define ROWS 8
 #define COLS 8
 
@@ -117,25 +116,36 @@ bool helloworld(void *)
   return true; // keep timer active
 }
 
-/*
-void parseData() {      // split the data into its parts
-    char * strtokIndx; // this is used by strtok() as an index
-
-    strtokIndx = strtok(tempChars,",");      // get the first part - the string
-    strcpy(messageFromPC, strtokIndx); // copy it to messageFromPC
- 
-    strtokIndx = strtok(NULL, ","); // this continues where the previous call left off
-    integerFromPC = atoi(strtokIndx);     // convert this part to an integer
-
-    strtokIndx = strtok(NULL, ",");
-    floatFromPC = atof(strtokIndx);     // convert this part to a float
-}
-*/
-
-void showParsedData() {
+void showParsedData(char* str) {
     Serial.print("EspMessage: ");
-    Serial.println(serialXfer.chars);   
+    Serial.println(str);   
 }
+
+void parseSerialData() {
+  char * strtokIndx;
+  char tempChars[SERIAL_MAX_LEN];
+  unsigned long brightness;
+  unsigned long rgb;
+  
+  // make a working copy
+  memcpy(tempChars, serialXfer.chars, SERIAL_MAX_LEN);
+  strtokIndx = strtok(tempChars,":"); 
+  if (strncmp(strtokIndx, "log", 3) == 0) {
+    // Just show the msg
+    showParsedData(strtok(NULL, ":"));
+  } else if (strncmp(strtokIndx, "mode", 4) == 0) {
+    char buf[64] = {0};
+    strtokIndx = strtok(NULL, ":");
+    brightness = strtoul(strtokIndx, NULL, 16);
+    strtokIndx = strtok(NULL, ":");
+    rgb = strtoul(strtokIndx, NULL, 16);
+    sprintf(buf, "mode %ld/%lx %ld/%lx", brightness, brightness, rgb, rgb);
+    showParsedData(buf);
+  } else {
+    Serial.println("Unknown message type from ESP");
+  }
+}
+
 
 void readEspMessages() {
   char serChar;
@@ -157,13 +167,14 @@ void readEspMessages() {
               serialXfer.recvInProgress = false;
               serialXfer.index = 0;
               serialXfer.completeData = true;
-              showParsedData();
           }
       } else if (serChar == SERIAL_START) {
           serialXfer.recvInProgress = true;
       }
   }
   if (serialXfer.completeData == true) {
+    //showParsedData(serialXfer.chars);
+    parseSerialData();
     serialXfer.completeData = false;
   }
 }
@@ -180,8 +191,8 @@ void lcd_setup() {
   char str[50];
   sprintf("Display height is %d, width is %d", height, width);
   show_string("* OMG iz it working!? *",CENTER,3,1,0x07E0, 0,1);
-  show_string(str,CENTER,my_lcd.Get_Display_Height()-11,1,0xFFFF, 0,1);
-  show_string("---> T+L 4eva <---",CENTER,my_lcd.Get_Display_Height()/2 - 11,8,RED, 0,1);
+  //show_string(str,CENTER,my_lcd.Get_Display_Height()-11,1,0xFFFF, 0,1);
+  //show_string("---> T+L 4eva <---",CENTER,my_lcd.Get_Display_Height()/2 - 11,8,RED, 0,1);
 }
 
 void setup(){
@@ -197,10 +208,9 @@ void setup(){
   //FastLED.setBrightness(  BRIGHTNESS );
   
   //buttons.setHoldTime(1000); // require a 1 second hold to change modes
-  //randomSeed(analogRead(1)); //Seed Random
   //clear_display(); //Make sure the display is blank
   timer.every(5000, helloworld);
-
+  lcd_setup();
   Serial.println("Finished setup.");
 }
 

@@ -51,10 +51,16 @@ void logToSerial(const char *str, T... args) {
       char buf[len];
       bzero(buf, len);
       sprintf(buf, str, args...);
-      Serial.print('<');
+      Serial.print("<log:");
       Serial.print(buf);
       Serial.print('>');
   }
+}
+
+void alertModeChange(char *str) {
+  Serial.print("<mode:");
+  Serial.print(str);
+  Serial.print(">");
 }
 
 void setupOTA() {
@@ -130,12 +136,21 @@ boolean connectWifi() {
 bool helloworld(void *)
 {
   logToSerial("Hello from ESP world.");
+
+  /*
+  char buf[32] = {0};
+  sprintf(buf, "%x:%x", 0xff, 0xff0000);
+  alertModeChange(buf);
+  */
   return true; // keep timer active
 }
 
 void colorLightChanged1(uint8_t brightnessCommand, uint32_t rgb)
 {
-  logToSerial("OMG...its working!?. brightness - 0x%x rbd - 0x%x", brightnessCommand, rgb);
+  char buf[64] = {0};
+  //logToSerial("OMG...its working!?. brightness - 0x%x rgb - 0x%x", brightnessCommand, rgb);
+  sprintf(buf, "%x:%x", brightnessCommand, rgb);
+  alertModeChange(buf);
 }
 
 void setup() {
